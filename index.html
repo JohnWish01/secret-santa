@@ -354,6 +354,7 @@ let rotation = 0;
 function paintWheel(labels) {
   const canvas = $('wheel');
   const size = canvas.offsetWidth; // taille sans la rotation
+  if (size < 20) return; // page pas encore mise en page : on redessinera dès qu'elle aura sa taille
   const dpr = window.devicePixelRatio || 1;
   canvas.width = canvas.height = Math.round(size * dpr);
   const ctx = canvas.getContext('2d');
@@ -414,9 +415,9 @@ function showSpin(data, hash) {
   const labels = data.n.filter(n => n !== data.g);
   const target = labels.indexOf(data.r);
   const canvas = $('wheel');
-  paintWheel(labels);
-  // redessine net si la roue change de taille (tablette tournée, fenêtre redimensionnée)
-  let lastW = canvas.offsetWidth;
+  // dessine la roue dès qu'elle a une taille, puis la redessine nette si elle change
+  // (lien ouvert dans WhatsApp ou en arrière-plan, tablette tournée, fenêtre redimensionnée)
+  let lastW = 0;
   new ResizeObserver(() => {
     const w = canvas.offsetWidth;
     if (Math.abs(w - lastW) > 1) { lastW = w; paintWheel(labels); }
