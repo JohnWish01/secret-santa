@@ -107,6 +107,26 @@
     .ghost:hover { border-color: var(--muted); }
   }
 
+  /* Compte à rebours */
+  .countdown { margin: 1.25rem 0 .5rem; text-align: center; }
+  .countdown .units { display: flex; justify-content: center; gap: .5rem; }
+  .countdown .unit {
+    min-width: 4.25rem;
+    padding: .6rem .4rem .5rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+  }
+  .countdown .num {
+    display: block;
+    font: 700 1.75rem/1 var(--display);
+    font-variant-numeric: tabular-nums;
+    color: var(--gold);
+  }
+  .countdown .lbl { display: block; font-size: .8125rem; color: var(--muted); margin-top: .3rem; }
+  .countdown .caption { font-size: .9375rem; color: var(--muted); margin: .6rem 0 0; }
+  .countdown .today { font: 700 1.5rem/1.2 var(--display); color: var(--gold); margin: 0; }
+
   .error {
     color: #ffb4a8;
     background: #3a1a16;
@@ -295,9 +315,57 @@ function linkFor(title, names, pair) {
   return `${base}#p=${pack({ t: title, n: names, g: pair.giver, r: pair.recipient })}`;
 }
 
+/* ---------- Compte à rebours jusqu'au 24 décembre 2026 ---------- */
+const EVENT = new Date(2026, 11, 24);   // 24 décembre 2026, 0 h, heure du téléphone
+const EVENT_END = new Date(2026, 11, 25);
+const plural = (n, word) => `${word}${n > 1 ? 's' : ''}`;
+let countdownTimer;
+
+// Un seul bloc, déplacé sous le texte d'intro de l'écran affiché
+function placeCountdown(section) {
+  if (section.id === 'broken') return;
+  let box = $('countdown');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'countdown';
+    box.className = 'countdown';
+    box.setAttribute('role', 'timer');
+  }
+  section.querySelector('h1 + p').after(box);
+  clearInterval(countdownTimer);
+  tickCountdown();
+  countdownTimer = setInterval(tickCountdown, 1000);
+}
+
+function tickCountdown() {
+  const box = $('countdown'), now = new Date();
+  if (now >= EVENT_END) { box.hidden = true; clearInterval(countdownTimer); return; }
+  if (now >= EVENT) {
+    box.innerHTML = '<p class="today">C\'est le grand jour !</p>';
+    box.setAttribute('aria-label', "C'est le grand jour");
+    return;
+  }
+  let s = Math.floor((EVENT - now) / 1000);
+  const d = Math.floor(s / 86400); s %= 86400;
+  const h = Math.floor(s / 3600); s %= 3600;
+  const m = Math.floor(s / 60); s %= 60;
+  const units = [[d, plural(d, 'jour')], [h, plural(h, 'heure')], [m, 'min'], [s, 's']];
+  if (!box.querySelector('.units')) {
+    box.innerHTML = '<div class="units" aria-hidden="true">' +
+      units.map(() => '<div class="unit"><span class="num"></span><span class="lbl"></span></div>').join('') +
+      '</div><p class="caption">avant le 24 décembre</p>';
+  }
+  box.querySelectorAll('.unit').forEach((el, i) => {
+    el.firstChild.textContent = i ? String(units[i][0]).padStart(2, '0') : units[i][0];
+    el.lastChild.textContent = units[i][1];
+  });
+  box.setAttribute('aria-label', `Plus que ${d} ${plural(d, 'jour')} et ${h} ${plural(h, 'heure')} avant le 24 décembre`);
+}
+
 /* ---------- Entrée d'un écran en cascade ---------- */
 // titre (0 ms, monte le plus), intro (90 ms), puis tout le reste ensemble (170 ms, bouge peu)
 function enter(section) {
+  placeCountdown(section);
   const kids = [...section.children].filter(el => !el.classList.contains('result') && el.id !== 'setup-error');
   kids.forEach((el, i) => {
     el.style.setProperty('--d', i === 0 ? '0ms' : i === 1 ? '90ms' : '170ms');
