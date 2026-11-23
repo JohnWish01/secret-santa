@@ -120,6 +120,26 @@
   .ghost { background: transparent; border: 1px solid var(--line); }
   .small { padding: .6rem 1rem; min-height: 2.75rem; font-size: .9375rem; display: inline-flex; gap: .45rem; align-items: center; }
   .small svg { width: 1.1rem; height: 1.1rem; flex: none; }
+  /* boutons WhatsApp : liens stylés en boutons (ouvrent WhatsApp avec le message prêt) */
+  a.wa {
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .6rem .9rem; min-height: 2.75rem; border-radius: 999px;
+    background: #1f9d55; color: #fff; font-weight: 600; font-size: .9375rem;
+    text-decoration: none; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+    transition: transform 120ms var(--ease-out), background-color 120ms;
+  }
+  a.wa:active { transform: scale(.97); background: #188447; }
+  a.wa svg { width: 1.1rem; height: 1.1rem; }
+  a.wa-all {
+    display: flex; align-items: center; justify-content: center; text-decoration: none;
+    background: #1f9d55; box-sizing: border-box; border-radius: 999px; color: #fff;
+    font-weight: 600; min-height: 3rem; padding: 1rem 1.5rem; margin-top: 1.5rem;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  a.wa-all:active { background: #188447; transform: scale(.98); }
+  a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .icon-btn { padding: 0; width: 2.75rem; justify-content: center; }
+  @media (hover: hover) and (pointer: fine) { a.wa:hover, a.wa-all:hover { background: #188447; } }
   @media (hover: hover) and (pointer: fine) {
     .primary:hover { background: var(--red-press); }
     .ghost:hover { border-color: var(--muted); }
@@ -288,9 +308,12 @@
   <!-- Écran organisateur : liens à envoyer -->
   <section id="links" hidden>
     <h1 id="links-title"></h1>
-    <p class="muted">Le tirage est fait et personne ne le connaît, pas même toi. Envoie à chaque personne <strong>son propre lien</strong>, en message privé : s'il est posté dans un groupe, tout le monde pourrait voir les tirages des autres.</p>
+    <p class="muted">Le tirage est fait et personne ne le connaît, pas même toi. Envoie à chaque personne <strong>son propre lien</strong>. Chaque message WhatsApp indique en gros à qui il est destiné.</p>
     <ul class="links" id="link-list"></ul>
+    <a class="primary wa-all" id="wa-all" target="_blank" rel="noopener">Tout envoyer dans WhatsApp</a>
+    <p class="hint">Un seul message avec tous les liens, chacun bien séparé avec le prénom en titre.</p>
     <div class="row">
+      <button class="ghost small" id="copy-all">Tout copier</button>
       <button class="ghost small" id="redo">Refaire un tirage</button>
     </div>
   </section>
@@ -477,6 +500,21 @@ function showSetup() {
   enter($('setup'));
 }
 
+/* ---------- Messages WhatsApp : le prénom en gros en titre, pour qu'on ne se trompe pas ---------- */
+const WA_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+// *texte* = gras dans WhatsApp
+function waMessage(state, pair) {
+  const NAME = pair.giver.toLocaleUpperCase('fr');
+  return `🎅 *Pour ${NAME} uniquement*\n` +
+    `${pair.giver}, voici ton lien secret pour le ${state.title} 🎁\n` +
+    `Les autres, ne l'ouvrez pas : c'est celui ${/^[aeiouyhàâäéèêëîïôöùûü]/i.test(pair.giver) ? "d'" : 'de '}${pair.giver} !\n` +
+    `👉 ${linkFor(state.title, state.names, pair)}`;
+}
+function waAllMessages(state) {
+  return `🎁 *${state.title}*\nChacun clique *uniquement* sur le lien à son prénom !\n\n━━━━━━━━━━━━\n\n` +
+    state.pairs.map(p => waMessage(state, p)).join('\n\n━━━━━━━━━━━━\n\n');
+}
+
 function showLinks(state) {
   $('setup').hidden = true;
   $('links').hidden = false;
@@ -492,28 +530,42 @@ function showLinks(state) {
     const done = document.createElement('span');
     done.className = 'done';
     if (state.sent?.[i]) done.textContent = 'envoyé';
+    const markSent = () => {
+      state.sent = state.sent || [];
+      state.sent[i] = true;
+      localStorage.setItem(ORGA, JSON.stringify(state));
+      done.textContent = 'envoyé';
+    };
+    // bouton WhatsApp : ouvre WhatsApp avec le message prêt, il ne reste qu'à choisir la discussion
+    const wa = document.createElement('a');
+    wa.className = 'wa';
+    wa.href = 'https://wa.me/?text=' + encodeURIComponent(waMessage(state, pair));
+    wa.target = '_blank';
+    wa.rel = 'noopener';
+    wa.innerHTML = WA_ICON + 'WhatsApp';
+    wa.setAttribute('aria-label', `Envoyer le lien de ${pair.giver} sur WhatsApp`);
+    wa.addEventListener('click', markSent);
+    // autre bouton : partage du téléphone (SMS, mail…) ou copie du lien
     const btn = document.createElement('button');
-    btn.className = 'ghost small';
+    btn.className = 'ghost small icon-btn';
     btn.innerHTML = canShare
-      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="m16 6-4-4-4 4"/><path d="M12 2v13"/></svg>Envoyer'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copier le lien';
-    btn.setAttribute('aria-label', `${canShare ? 'Envoyer' : 'Copier'} le lien de ${pair.giver}`);
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7"/><path d="m16 6-4-4-4 4"/><path d="M12 2v13"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    btn.setAttribute('aria-label', `${canShare ? 'Partager autrement' : 'Copier'} le lien de ${pair.giver}`);
+    btn.title = canShare ? 'Partager autrement (SMS, mail…)' : 'Copier le lien';
     btn.addEventListener('click', async () => {
       const url = linkFor(state.title, state.names, pair);
       const text = `${pair.giver}, voici ton lien secret pour le ${state.title} 🎁`;
       try {
         if (canShare) await navigator.share({ title: state.title, text, url });
-        else { await navigator.clipboard.writeText(url); btn.lastChild.textContent = 'Copié'; }
+        else { await navigator.clipboard.writeText(url); done.textContent = 'copié'; }
       } catch (e) {
         if (e.name === 'AbortError') return; // partage annulé par l'utilisateur
         window.prompt(`Copie ce lien pour ${pair.giver} :`, url);
       }
-      state.sent = state.sent || [];
-      state.sent[i] = true;
-      localStorage.setItem(ORGA, JSON.stringify(state));
-      done.textContent = 'envoyé';
+      markSent();
     });
-    li.append(name, done, btn);
+    li.append(name, done, wa, btn);
     // vague qui accélère sur les 8 premières lignes ; les suivantes arrivent avec la 8e
     const k = Math.min(i, 7);
     li.className = 'enter-li';
@@ -522,6 +574,12 @@ function showLinks(state) {
     li.style.setProperty('--dur', '500ms');
     list.append(li);
   });
+  $('wa-all').href = 'https://wa.me/?text=' + encodeURIComponent(waAllMessages(state));
+  $('copy-all').textContent = 'Tout copier';
+  $('copy-all').onclick = async () => {
+    try { await navigator.clipboard.writeText(waAllMessages(state)); $('copy-all').textContent = 'Copié !'; }
+    catch { window.prompt('Copie tous les messages :', waAllMessages(state)); }
+  };
   enter($('links'));
   $('link-list').style.animation = 'none'; // la liste ne bouge pas : ce sont ses lignes qui entrent
 }
