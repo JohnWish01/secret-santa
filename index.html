@@ -353,7 +353,7 @@ let rotation = 0;
 
 function paintWheel(labels) {
   const canvas = $('wheel');
-  const size = canvas.getBoundingClientRect().width;
+  const size = canvas.offsetWidth; // taille sans la rotation
   const dpr = window.devicePixelRatio || 1;
   canvas.width = canvas.height = Math.round(size * dpr);
   const ctx = canvas.getContext('2d');
@@ -399,7 +399,12 @@ function paintWheel(labels) {
 function showResult(data) {
   $('who').textContent = data.r;
   $('event').textContent = '24 décembre';
-  $('result').hidden = false;
+  const res = $('result');
+  res.hidden = false;
+  res.style.visibility = '';
+  res.style.animation = 'none';
+  void res.offsetHeight; // relance l'apparition
+  res.style.animation = '';
 }
 
 function showSpin(data, hash) {
@@ -410,8 +415,12 @@ function showSpin(data, hash) {
   const target = labels.indexOf(data.r);
   const canvas = $('wheel');
   paintWheel(labels);
-  let resizeTimer;
-  addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => paintWheel(labels), 150); });
+  // redessine net si la roue change de taille (tablette tournée, fenêtre redimensionnée)
+  let lastW = canvas.offsetWidth;
+  new ResizeObserver(() => {
+    const w = canvas.offsetWidth;
+    if (Math.abs(w - lastW) > 1) { lastW = w; paintWheel(labels); }
+  }).observe($('wheel-wrap'));
 
   const seen = 'secret-santa-vu-' + hash.slice(-24);
   const btn = $('spin-btn');
@@ -423,7 +432,8 @@ function showSpin(data, hash) {
   btn.addEventListener('click', () => {
     btn.disabled = true;
     btn.textContent = 'La roue tourne…';
-    $('result').hidden = true;
+    // on cache le résultat sans libérer sa place : la page ne saute pas
+    $('result').style.visibility = 'hidden';
     $('wheel-wrap').classList.remove('won');
     const segDeg = 360 / labels.length;
     const jitter = (Math.random() - 0.5) * segDeg * 0.7;
@@ -431,7 +441,7 @@ function showSpin(data, hash) {
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     // tourne toujours vers l'avant depuis la position actuelle
     const from = rotation;
-    const to = Math.ceil(from / 360) * 360 + (reduce ? 1 : 9) * 360 + ((landing % 360) + 360) % 360;
+    const to = Math.ceil(from / 360) * 360 + (reduce ? 1 : 5) * 360 + ((landing % 360) + 360) % 360;
     spinWheel(from, to, segDeg, reduce).then(() => {
       rotation = to;
       localStorage.setItem(seen, '1');
@@ -470,13 +480,15 @@ function tick(volume) {
 
 function spinWheel(from, to, segDeg, reduce) {
   const canvas = $('wheel'), pointer = document.querySelector('.pointer');
-  const windup = reduce ? 0 : WINDUP, spin = reduce ? 900 : SPIN;
+  const windup = reduce ? 0 : WINDUP, spin = reduce ? 1400 : SPIN;
   const back = reduce ? 0 : Math.min(18, segDeg * .6);
   tick(0); // débloque le son sur iPhone : il faut le créer pendant le clic
   return new Promise(done => {
-    let start = null, prev = from, lastTick = Math.floor(from / segDeg), flick = 0;
+    let start = null, prev = from, prevT = 0, lastTick = Math.floor(from / segDeg), flick = 0;
     function frame(now) {
       start ??= now;
+      const dt = Math.max(1, now - (prevT || now - 16.7));
+      prevT = now;
       const el = now - start;
       let rot;
       if (el < windup) rot = from - back * easeInOut(el / windup);
@@ -486,8 +498,13 @@ function spinWheel(from, to, segDeg, reduce) {
       }
       canvas.style.transform = `rotate(${rot}deg)`;
 
+      // vitesse en degrés par image à 60 Hz, quel que soit l'écran (60, 90 ou 120 Hz)
+      const speed = Math.abs(rot - prev) / dt * 16.7;
+      // flou de mouvement quand ça va vite : sans lui, l'œil croit que la roue saccade ou recule
+      const blur = Math.min(2, Math.max(0, (speed - 4) * .18));
+      canvas.style.filter = blur > .1 ? `blur(${blur.toFixed(2)}px)` : '';
+
       // la languette claque à chaque tranche qui passe, plus fort quand ça va vite
-      const speed = Math.abs(rot - prev);
       const seg = Math.floor(rot / segDeg);
       if (seg !== lastTick && !reduce) {
         flick = -Math.min(28, 10 + speed * 1.6) * Math.sign(rot - prev || 1);
@@ -500,7 +517,7 @@ function spinWheel(from, to, segDeg, reduce) {
       prev = rot;
 
       if (el < windup + spin || Math.abs(flick) > .2) requestAnimationFrame(frame);
-      else { pointer.style.transform = 'translateX(-50%)'; done(); }
+      else { pointer.style.transform = 'translateX(-50%)'; canvas.style.filter = ''; done(); }
     }
     requestAnimationFrame(frame);
   });
