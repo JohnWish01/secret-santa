@@ -93,6 +93,8 @@
     transition: border-color 150ms var(--ease-out);
   }
   textarea { min-height: 13rem; resize: vertical; }
+  textarea.short { min-height: 6.5rem; }
+  .optional { font-weight: 400; color: var(--muted); }
   input:focus-visible, textarea:focus-visible { outline: none; border-color: var(--gold); }
   ::placeholder { color: #8b9a88; }
   .hint { font-size: .9375rem; color: var(--muted); margin: .4rem 0 0; }
@@ -212,13 +214,42 @@
   }
   .enter > .wheel-wrap { animation: wheel-in 900ms var(--ease-out) var(--d, 0ms) both; }
   .result.show > * { animation: rise 600ms var(--ease-out) var(--d, 0ms) both; }
-  .result.show > .who { animation: name-in 800ms var(--ease-out) 120ms both; }
+  .result.show .card:not(.scratching) .who { animation: name-in 800ms var(--ease-out) 120ms both; }
+
+  /* Carte à gratter */
+  .card {
+    position: relative;
+    width: min(100%, 20rem);
+    margin: .5rem auto 1rem;
+    padding: 1.4rem 1rem;
+    border-radius: 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .card .who { margin: 0; }
+  #scratch {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border-radius: 18px;
+    touch-action: none; /* le doigt gratte au lieu de faire défiler la page */
+    cursor: grab;
+    transition: opacity 500ms var(--ease-out);
+  }
+  #scratch.gone { opacity: 0; pointer-events: none; }
+  .card.revealed .who { animation: pop 600ms var(--ease-out) both; }
+  @keyframes pop { from { transform: scale(1.12); } }
+  .reveal {
+    background: none; border: 0; padding: .5rem 1rem; min-height: 2.75rem;
+    color: var(--muted); font-weight: 500; text-decoration: underline; text-underline-offset: 3px;
+  }
+  @media (hover: hover) and (pointer: fine) { .reveal:hover { color: var(--text); } }
   @media (prefers-reduced-motion: reduce) {
     /* tout apparaît ensemble, en fondu, sans mouvement */
     @keyframes rise { from { opacity: 0; } }
     @keyframes wheel-in { from { opacity: 0; } }
     @keyframes name-in { from { opacity: 0; } }
-    .enter > :not(.result), .links li.enter-li, .result.show > *, .result.show > .who, .enter > .wheel-wrap { animation-delay: 0ms; animation-duration: 300ms; }
+    .enter > :not(.result), .links li.enter-li, .result.show > *, .result.show .who, .enter > .wheel-wrap { animation-delay: 0ms; animation-duration: 300ms; }
+    @keyframes pop { from { opacity: .4; } }
   }
   #fireworks { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
   @media (min-width: 700px) { main { padding-top: calc(4rem + env(safe-area-inset-top, 0px)); } }
@@ -245,6 +276,10 @@
     <label for="names">Participants</label>
     <textarea id="names" placeholder="Un prénom par ligne&#10;Marie&#10;Lucas&#10;Inès" autocapitalize="words" autocomplete="off" spellcheck="false"></textarea>
     <p class="hint">Au moins 3 personnes. Si deux personnes ont le même prénom, ajoute une initiale (Marie L., Marie D.).</p>
+
+    <label for="exclusions">Ne doivent pas se tirer entre eux <span class="optional">(facultatif)</span></label>
+    <textarea id="exclusions" class="short" placeholder="Un groupe par ligne&#10;Marie + Lucas&#10;Inès + Paul + Léa" autocapitalize="words" autocomplete="off" spellcheck="false"></textarea>
+    <p class="hint">Les personnes d'une même ligne ne pourront pas se tirer entre elles : un couple, des parents et leurs enfants…</p>
     <p class="error" id="setup-error" role="alert" hidden></p>
 
     <button class="primary" id="do-draw">Faire le tirage</button>
@@ -266,14 +301,18 @@
     <p class="muted" id="spin-lead">Tourne la roue pour découvrir à qui tu offres un cadeau.</p>
     <div class="wheel-wrap" id="wheel-wrap">
       <svg class="pointer" viewBox="0 0 34 40" aria-hidden="true"><path d="M17 40 2 6a5 5 0 0 1 4.6-6h20.8A5 5 0 0 1 32 6Z" fill="#e3b04b"/></svg>
-      <canvas id="wheel" role="img" aria-label="Roue avec les prénoms des participants"></canvas>
+      <canvas id="wheel" role="img" aria-label="Roue de cadeaux mystère"></canvas>
       <div class="hub"></div>
     </div>
     <button class="primary" id="spin-btn">Tourner la roue</button>
     <div class="result" id="result" hidden aria-live="polite">
       <p class="muted">Tu offres un cadeau à</p>
-      <p class="who" id="who"></p>
-      <p class="muted">Garde le secret jusqu'au <span id="event"></span> !</p>
+      <div class="card" id="card">
+        <p class="who" id="who"></p>
+        <canvas id="scratch" hidden aria-hidden="true"></canvas>
+      </div>
+      <button class="reveal" id="reveal-btn" hidden>Révéler sans gratter</button>
+      <p class="muted" id="outro">Garde le secret jusqu'au <span id="event"></span> !</p>
     </div>
   </section>
 
@@ -307,15 +346,46 @@ function unpack(str) {
 
 function randInt(max) { return crypto.getRandomValues(new Uint32Array(1))[0] % max; }
 
-// Mélange puis forme une seule boucle : chacun offre au suivant.
-// Personne ne se tire soi-même, chacun offre une fois et reçoit une fois,
-// et (à partir de 3) jamais d'échange A↔B.
-function draw(names) {
-  const a = [...names];
+function shuffle(list) {
+  const a = [...list];
   for (let i = a.length - 1; i > 0; i--) { const j = randInt(i + 1); [a[i], a[j]] = [a[j], a[i]]; }
-  return a.map((giver, i) => ({ giver, recipient: a[(i + 1) % a.length] }))
-    // tri alphabétique : l'ordre de la boucle trahirait qui offre à qui
-    .sort((x, y) => x.giver.localeCompare(y.giver, 'fr'));
+  return a;
+}
+
+// Tirage. Personne ne se tire soi-même, chacun offre une fois et reçoit une fois,
+// et personne ne tire quelqu'un de son groupe d'exclusion (`banned` : clés "A|B").
+// On cherche d'abord une seule grande boucle (chacun offre au suivant : jamais d'échange A↔B),
+// sinon n'importe quel tirage valable. Renvoie null si les exclusions rendent le tirage impossible.
+function draw(names, banned = new Set()) {
+  const ok = (g, r) => g !== r && !banned.has(g + '|' + r);
+  let pairs = null;
+  for (let t = 0; t < 20000 && !pairs; t++) {
+    const a = shuffle(names);
+    if (a.every((g, i) => ok(g, a[(i + 1) % a.length]))) pairs = a.map((g, i) => ({ giver: g, recipient: a[(i + 1) % a.length] }));
+  }
+  for (let t = 0; t < 20000 && !pairs; t++) {
+    const r = shuffle(names);
+    if (names.every((g, i) => ok(g, r[i]))) pairs = names.map((g, i) => ({ giver: g, recipient: r[i] }));
+  }
+  // tri alphabétique : l'ordre de la boucle trahirait qui offre à qui
+  return pairs && pairs.sort((x, y) => x.giver.localeCompare(y.giver, 'fr'));
+}
+
+// Lit les groupes d'exclusion : une ligne par groupe, prénoms séparés par + , & ou « et »
+function parseExclusions(text, names) {
+  const byKey = new Map(names.map(n => [norm(n), n]));
+  const banned = new Set();
+  for (const line of text.split('\n')) {
+    const group = line.split(/\s*(?:\+|,|;|&|\set\s)\s*/i).map(s => s.trim()).filter(Boolean);
+    const found = [];
+    for (const g of group) {
+      const n = byKey.get(norm(g));
+      if (!n) return { error: `Exclusions : « ${g} » n'est pas dans la liste des participants. Vérifie l'orthographe.` };
+      found.push(n);
+    }
+    for (const a of found) for (const b of found) if (a !== b) banned.add(a + '|' + b);
+  }
+  return { banned };
 }
 
 const norm = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ');
@@ -459,10 +529,15 @@ function showLinks(state) {
 $('do-draw').addEventListener('click', () => {
   const parsed = parseNames($('names').value);
   const err = $('setup-error');
-  if (parsed.error) { err.textContent = parsed.error; err.hidden = false; return; }
+  const fail = msg => { err.textContent = msg; err.hidden = false; };
+  if (parsed.error) return fail(parsed.error);
+  const ex = parseExclusions($('exclusions').value, parsed.names);
+  if (ex.error) return fail(ex.error);
+  const pairs = draw(parsed.names, ex.banned);
+  if (!pairs) return fail("Impossible de faire un tirage avec ces exclusions : un groupe est trop grand par rapport au nombre de participants. Retire quelques exclusions ou ajoute des participants.");
   err.hidden = true;
   const title = $('title').value.trim() || 'Secret Santa';
-  const state = { title, names: parsed.names, pairs: draw(parsed.names), sent: [] };
+  const state = { title, names: parsed.names, exclusions: $('exclusions').value, pairs, sent: [] };
   localStorage.setItem(ORGA, JSON.stringify(state));
   showLinks(state);
   scrollTo(0, 0);
@@ -473,6 +548,7 @@ $('redo').addEventListener('click', () => {
   const state = JSON.parse(localStorage.getItem(ORGA));
   $('title').value = state.title;
   $('names').value = state.names.join('\n');
+  $('exclusions').value = state.exclusions || '';
   localStorage.removeItem(ORGA);
   showSetup();
 });
@@ -482,7 +558,22 @@ const COLORS = ['#c4382d', '#1f5a43', '#f4ecdd'];
 const INK = ['#fff7ec', '#f4ecdd', '#10201a'];
 let rotation = 0;
 
-function paintWheel(labels) {
+// Petit paquet cadeau dessiné, centré en (0, 0), de taille s
+function drawGift(ctx, s, color, ribbon) {
+  const h = s * .62, top = -s * .12;
+  ctx.fillStyle = color;
+  ctx.fillRect(-s / 2, top, s, h);                       // boîte
+  ctx.fillRect(-s * .56, top - s * .2, s * 1.12, s * .2); // couvercle
+  ctx.fillStyle = ribbon;
+  ctx.fillRect(-s * .08, top - s * .2, s * .16, h + s * .2); // ruban vertical
+  ctx.beginPath();                                        // nœud
+  ctx.ellipse(-s * .17, top - s * .3, s * .17, s * .1, -.5, 0, Math.PI * 2);
+  ctx.ellipse(s * .17, top - s * .3, s * .17, s * .1, .5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Roue mystère : des cadeaux à la place des prénoms, le prénom se découvre en grattant la carte
+function paintWheel(count) {
   const canvas = $('wheel');
   const size = canvas.offsetWidth; // taille sans la rotation
   if (size < 20) return; // page pas encore mise en page : on redessinera dès qu'elle aura sa taille
@@ -490,13 +581,9 @@ function paintWheel(labels) {
   canvas.width = canvas.height = Math.round(size * dpr);
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
-  const r = size / 2, n = labels.length, seg = (Math.PI * 2) / n;
-  const fontPx = Math.max(11, Math.min(20, seg * r * 0.42, size / 18));
-  ctx.font = `600 ${fontPx}px Figtree, system-ui, sans-serif`;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'right';
-  const maxW = r * 0.66;
-  labels.forEach((label, i) => {
+  const r = size / 2, n = count, seg = (Math.PI * 2) / n;
+  const giftPx = Math.max(14, Math.min(size / 9, seg * r * .5));
+  Array.from({ length: n }).forEach((_, i) => {
     // 3 couleurs qui tournent ; on évite que la dernière tranche ait la couleur de la première
     const c = (n % 3 === 1 && i === n - 1) ? 1 : i % 3;
     const start = -Math.PI / 2 + i * seg;
@@ -509,16 +596,13 @@ function paintWheel(labels) {
     ctx.strokeStyle = 'rgba(16,32,26,.35)';
     ctx.lineWidth = 1;
     ctx.stroke();
-    let text = label;
-    if (ctx.measureText(text).width > maxW) {
-      while (text.length > 1 && ctx.measureText(text + '…').width > maxW) text = text.slice(0, -1);
-      text += '…';
-    }
+    // le cadeau est posé vers le bord, couvercle tourné vers l'extérieur
     ctx.save();
     ctx.translate(r, r);
     ctx.rotate(start + seg / 2);
-    ctx.fillStyle = INK[c];
-    ctx.fillText(text, r - 14, 0);
+    ctx.translate(r * .68, 0);
+    ctx.rotate(Math.PI / 2);
+    drawGift(ctx, giftPx, INK[c], c === 2 ? '#c4382d' : '#e3b04b');
     ctx.restore();
   });
   ctx.beginPath();
@@ -528,20 +612,99 @@ function paintWheel(labels) {
   ctx.stroke();
 }
 
-function showResult(data) {
+// scratch = true : le prénom est caché sous une carte à gratter ; onReveal est appelé une fois découvert
+function showResult(data, scratch = false, onReveal = () => {}) {
   $('who').textContent = data.r;
   $('event').textContent = '24 décembre';
-  const res = $('result');
+  const res = $('result'), card = $('card'), canvas = $('scratch'), btn = $('reveal-btn'), outro = $('outro');
   res.hidden = false;
   res.style.visibility = '';
-  const [lead, , outro] = res.children;
-  lead.style.setProperty('--d', '0ms');
-  lead.style.setProperty('--rise', '8px');
-  outro.style.setProperty('--d', '380ms');
-  outro.style.setProperty('--rise', '6px');
+  [[res.children[0], 0, 8], [card, 120, 10], [btn, 300, 4], [outro, 380, 6]].forEach(([el, d, rise]) => {
+    el.style.setProperty('--d', d + 'ms');
+    el.style.setProperty('--rise', rise + 'px');
+  });
+  card.classList.toggle('scratching', scratch);
+  card.classList.remove('revealed');
+  canvas.classList.remove('gone');
+  canvas.hidden = !scratch;
+  btn.hidden = !scratch;
+  outro.style.visibility = scratch ? 'hidden' : '';
   res.classList.remove('show');
   void res.offsetWidth; // relance l'apparition
   res.classList.add('show');
+  if (!scratch) return;
+
+  let done = false;
+  const reveal = () => {
+    if (done) return;
+    done = true;
+    card.classList.remove('scratching');
+    card.classList.add('revealed');
+    canvas.classList.add('gone');
+    setTimeout(() => { canvas.hidden = true; }, 500);
+    btn.hidden = true;
+    outro.style.visibility = '';
+    outro.style.animation = 'none';
+    void outro.offsetWidth;
+    outro.style.animation = '';
+    outro.style.setProperty('--d', '250ms');
+    navigator.vibrate?.(40);
+    onReveal();
+  };
+  btn.onclick = reveal;
+  paintScratch(canvas, card, reveal);
+}
+
+/* ---------- Carte à gratter ---------- */
+function paintScratch(canvas, card, reveal) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = card.offsetWidth, h = card.offsetHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  // surface dorée, avec de petites paillettes
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, '#f2cd73'); g.addColorStop(.5, '#c9922f'); g.addColorStop(1, '#ecc060');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < w * h / 90; i++) {
+    ctx.fillStyle = `rgba(255,248,225,${Math.random() * .5})`;
+    ctx.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+  }
+  ctx.fillStyle = '#3b2a0c';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 22px Fraunces, Georgia, serif';
+  ctx.fillText('Gratte ici', w / 2, h / 2 - 8);
+  ctx.font = '500 13px Figtree, system-ui, sans-serif';
+  ctx.fillText('avec ton doigt', w / 2, h / 2 + 16);
+
+  // le doigt efface la surface ; au-delà de la moitié grattée, la carte se dévoile
+  let last = null, moves = 0;
+  const pos = e => { const b = canvas.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
+  const scratchTo = p => {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.lineWidth = 42; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(...(last || p));
+    ctx.lineTo(...p);
+    ctx.stroke();
+    last = p;
+  };
+  const cleared = () => {
+    const px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let clear = 0, total = 0;
+    for (let i = 3; i < px.length; i += 4 * 12) { total++; if (px[i] < 128) clear++; }
+    return clear / total;
+  };
+  canvas.onpointerdown = e => { canvas.setPointerCapture(e.pointerId); last = null; scratchTo(pos(e)); };
+  canvas.onpointermove = e => {
+    if (!canvas.hasPointerCapture(e.pointerId)) return;
+    scratchTo(pos(e));
+    if (++moves % 6 === 0 && cleared() > .5) reveal();
+  };
+  canvas.onpointerup = canvas.onpointercancel = () => { last = null; if (cleared() > .5) reveal(); };
 }
 
 function showSpin(data, hash) {
@@ -549,15 +712,15 @@ function showSpin(data, hash) {
   $('hello').textContent = `Salut ${data.g} !`;
   enter($('spin'));
   document.title = data.t;
-  const labels = data.n.filter(n => n !== data.g);
-  const target = labels.indexOf(data.r);
+  // autant de cadeaux que de personnes possibles, au moins 6 pour une belle roue
+  const slots = Math.max(6, data.n.length - 1);
   const canvas = $('wheel');
   // dessine la roue dès qu'elle a une taille, puis la redessine nette si elle change
   // (lien ouvert dans WhatsApp ou en arrière-plan, tablette tournée, fenêtre redimensionnée)
   let lastW = 0;
   new ResizeObserver(() => {
     const w = canvas.offsetWidth;
-    if (Math.abs(w - lastW) > 1) { lastW = w; paintWheel(labels); }
+    if (Math.abs(w - lastW) > 1) { lastW = w; paintWheel(slots); }
   }).observe($('wheel-wrap'));
 
   const seen = 'secret-santa-vu-' + hash.slice(-24);
@@ -573,7 +736,7 @@ function showSpin(data, hash) {
     // on cache le résultat sans libérer sa place : la page ne saute pas
     $('result').style.visibility = 'hidden';
     $('wheel-wrap').classList.remove('won');
-    const segDeg = 360 / labels.length;
+    const segDeg = 360 / slots, target = randInt(slots); // la roue choisit un cadeau au hasard
     const jitter = (Math.random() - 0.5) * segDeg * 0.7;
     const landing = -(target + 0.5) * segDeg + jitter;
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -594,9 +757,9 @@ function showSpin(data, hash) {
       localStorage.setItem(seen, '1');
       navigator.vibrate?.(80);
       $('wheel-wrap').classList.add('won');
-      showResult(data);
-      // les fusées partent quand le prénom apparaît ; en « animations réduites », version douce sur place
-      setTimeout(() => fireworks($('who'), reduce), reduce ? 0 : 200);
+      // la carte à gratter apparaît ; le feu d'artifice part quand le prénom est découvert
+      // (en « animations réduites », version douce sur place)
+      showResult(data, true, () => setTimeout(() => fireworks($('who'), reduce), reduce ? 0 : 150));
       btn.disabled = false;
       btn.textContent = 'Revoir la roue';
       $('result').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
