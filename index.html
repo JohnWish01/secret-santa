@@ -572,7 +572,8 @@ function showSpin(data, hash) {
       navigator.vibrate?.(80);
       $('wheel-wrap').classList.add('won');
       showResult(data);
-      if (!reduce) setTimeout(() => fireworks($('who')), 200); // les fusées partent quand le prénom apparaît
+      // les fusées partent quand le prénom apparaît ; en « animations réduites », version douce sur place
+      setTimeout(() => fireworks($('who'), reduce), reduce ? 0 : 200);
       btn.disabled = false;
       btn.textContent = 'Revoir la roue';
       $('result').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
@@ -649,7 +650,7 @@ function spinWheel(from, to, segDeg, reduce, spin) {
 
 /* ---------- Feu d'artifice autour du prénom ---------- */
 // Quelques fusées montent du bas de l'écran et éclatent autour du prénom, en léger décalé.
-function fireworks(anchor) {
+function fireworks(anchor, gentle = false) {
   const c = document.createElement('canvas');
   c.id = 'fireworks';
   document.body.append(c);
@@ -663,7 +664,9 @@ function fireworks(anchor) {
   const rand = (a, b) => a + Math.random() * (b - a);
 
   // 5 fusées : la première éclate juste au-dessus du prénom, les autres autour, de plus en plus serrées dans le temps
-  const rockets = [0, 260, 460, 620, 760].map((delay, i) => {
+  // version douce : 3 éclats sur place, sans fusées qui traversent l'écran, étincelles plus lentes
+  const flight = gentle ? 0 : 650, pace = gentle ? .6 : 1;
+  const rockets = (gentle ? [0, 350, 700] : [0, 260, 460, 620, 760]).map((delay, i) => {
     const dx = i === 0 ? 0 : rand(-1, 1) * Math.min(w * .42, 220);
     const dy = -(i === 0 ? 90 : rand(40, 200));
     return { delay, dx, dy, x: target()[0] + dx + rand(-30, 30), y: h + 10, done: false, color: palette[i % palette.length] };
@@ -671,13 +674,13 @@ function fireworks(anchor) {
   const sparks = [];
 
   function burst(r) {
-    const n = 46 + Math.floor(rand(0, 20)), speed = rand(3.2, 4.6);
+    const n = (gentle ? 30 : 46) + Math.floor(rand(0, 20)), speed = rand(3.2, 4.6) * pace;
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2 + rand(-.05, .05), v = speed * rand(.55, 1);
       sparks.push({ x: r.tx, y: r.ty, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1,
-        fade: rand(.011, .017), color: Math.random() < .25 ? '#fff6e0' : r.color, size: rand(1.4, 2.4) });
+        fade: rand(.011, .017) * pace, color: Math.random() < .25 ? '#fff6e0' : r.color, size: rand(1.4, 2.4) });
     }
-    navigator.vibrate?.(15);
+    if (!gentle) navigator.vibrate?.(15);
   }
 
   const t0 = performance.now();
@@ -695,10 +698,12 @@ function fireworks(anchor) {
       if (r.done || el < r.delay) continue;
       const [cx, cy] = target();
       r.tx = cx + r.dx; r.ty = Math.max(60, cy + r.dy);
-      const k = Math.min(1, (el - r.delay) / 650), e = 1 - Math.pow(1 - k, 3);
+      const k = flight ? Math.min(1, (el - r.delay) / flight) : 1, e = 1 - Math.pow(1 - k, 3);
       const x = r.x + (r.tx - r.x) * e, y = r.y + (r.ty - r.y) * e;
-      ctx.fillStyle = '#ffe9b0';
-      ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      if (flight) {
+        ctx.fillStyle = '#ffe9b0';
+        ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      }
       if (k >= 1) { r.done = true; burst(r); }
     }
     for (const s of sparks) {
