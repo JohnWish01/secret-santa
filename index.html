@@ -41,6 +41,19 @@
       var(--bg);
   }
   ::selection { background: var(--gold); color: var(--bg); }
+  .music {
+    position: fixed; z-index: 6;
+    top: calc(.75rem + env(safe-area-inset-top, 0px));
+    right: calc(.75rem + env(safe-area-inset-right, 0px));
+    width: 2.75rem; height: 2.75rem; min-height: 0; padding: 0;
+    display: grid; place-items: center;
+    background: rgb(24 44 36 / .85); border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .music svg { width: 1.25rem; height: 1.25rem; }
+  .music[aria-pressed="true"] { color: var(--gold); border-color: rgb(227 176 75 / .5); }
+  .music[aria-pressed="true"] .mute { display: none; }
+  @media (hover: hover) and (pointer: fine) { .music:hover { color: var(--text); } }
   #snow { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
   main {
     position: relative;
@@ -48,7 +61,7 @@
     width: min(100%, 32rem);
     margin: 0 auto;
     padding:
-      calc(2.5rem + env(safe-area-inset-top, 0px))
+      calc(4rem + env(safe-area-inset-top, 0px)) /* laisse la place au bouton musique */
       calc(1.25rem + env(safe-area-inset-right, 0px))
       calc(2.5rem + env(safe-area-inset-bottom, 0px))
       calc(1.25rem + env(safe-area-inset-left, 0px));
@@ -213,6 +226,12 @@
 </head>
 <body>
 <canvas id="snow" aria-hidden="true"></canvas>
+<button id="music" class="music" aria-pressed="false" aria-label="Musique de Noël">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+    <path class="mute" d="M3 3l18 18"/>
+  </svg>
+</button>
 <main>
 
   <!-- Écran organisateur : saisie des prénoms -->
@@ -592,9 +611,10 @@ const easeInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 const easeOut = t => 1 - Math.pow(1 - t, 4); // finit très lentement : le suspense
 
 let audio;
+const getAudio = () => (audio = audio || new (window.AudioContext || window.webkitAudioContext)());
 function tick(volume) {
   try {
-    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    getAudio();
     const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(1800, t);
@@ -724,6 +744,117 @@ function fireworks(anchor, gentle = false) {
     if (alive && el < 6000) requestAnimationFrame(frame); else c.remove();
   })(t0);
 }
+
+/* ---------- Musique de Noël : « Vive le vent » (Jingle Bells, 1857, domaine public) ---------- */
+// Jouée par la page elle-même, façon boîte à musique, avec des grelots. Rien à télécharger.
+// Les navigateurs interdisent le son avant un premier toucher : elle démarre au premier geste
+// si elle est activée (par défaut), et le bouton en haut à droite la coupe ou la relance.
+(function music() {
+  const KEY = 'secret-santa-musique';
+  const btn = $('music');
+  const BEAT = .3; // durée d'un temps, en secondes
+  const C4 = 261.63, n = semi => C4 * Math.pow(2, semi / 12);
+  const N = { C5: n(12), D5: n(14), E5: n(16), F5: n(17), G5: n(19),
+              F2: n(-19), G2: n(-17), C3: n(-12), D3: n(-10), G3: n(-5), C4: C4 };
+  // [note, durée en temps] : refrain complet, 16 mesures
+  const melody = [
+    ['E5',1],['E5',1],['E5',2], ['E5',1],['E5',1],['E5',2], ['E5',1],['G5',1],['C5',1.5],['D5',.5], ['E5',4],
+    ['F5',1],['F5',1],['F5',1.5],['F5',.5], ['F5',1],['E5',1],['E5',1],['E5',.5],['E5',.5], ['E5',1],['D5',1],['D5',1],['E5',1], ['D5',2],['G5',2],
+    ['E5',1],['E5',1],['E5',2], ['E5',1],['E5',1],['E5',2], ['E5',1],['G5',1],['C5',1.5],['D5',.5], ['E5',4],
+    ['F5',1],['F5',1],['F5',1.5],['F5',.5], ['F5',1],['E5',1],['E5',1],['E5',.5],['E5',.5], ['G5',1],['G5',1],['F5',1],['D5',1], ['C5',4],
+  ];
+  // une basse par mesure (fondamentale puis quinte)
+  const bass = ['C3','C3','C3','C3','F2','C3','G2','G2','C3','C3','C3','C3','F2','C3','G2','C3'];
+  const LOOP = 64 + 4; // 16 mesures + une mesure de silence avant de reprendre
+
+  let master, timer, loopStart, on = false;
+
+  function note(freq, t, dur, vol, type) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + .01);
+    g.gain.exponentialRampToValueAtTime(.0001, t + Math.max(.25, dur * 1.6));
+    o.connect(g).connect(master);
+    o.start(t); o.stop(t + Math.max(.3, dur * 1.7));
+  }
+  let noise;
+  function bells(t, vol) {
+    if (!noise) {
+      noise = audio.createBuffer(1, audio.sampleRate * .2, audio.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const s = audio.createBufferSource(), f = audio.createBiquadFilter(), g = audio.createGain();
+    s.buffer = noise; f.type = 'highpass'; f.frequency.value = 7000;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(.0001, t + .12);
+    s.connect(f).connect(g).connect(master);
+    s.start(t); s.stop(t + .15);
+  }
+
+  // Programme une boucle entière d'un coup, et la suivante juste avant la fin
+  function schedule() {
+    let t = loopStart;
+    for (const [k, d] of melody) {
+      note(N[k], t, d * BEAT, .22, 'triangle');
+      note(N[k] * 2, t, d * BEAT * .6, .05, 'sine'); // petit éclat de boîte à musique
+      t += d * BEAT;
+    }
+    bass.forEach((k, bar) => {
+      const t0 = loopStart + bar * 4 * BEAT;
+      note(N[k], t0, 2 * BEAT, .16, 'sine');
+      note(N[k] * 1.5, t0 + 2 * BEAT, 2 * BEAT, .1, 'sine');
+      for (const b of [1, 3]) bells(t0 + b * BEAT, .06);
+    });
+    loopStart += LOOP * BEAT;
+  }
+
+  function start() {
+    try { getAudio(); } catch { return; }
+    audio.resume();
+    master = audio.createGain();
+    master.gain.setValueAtTime(0, audio.currentTime);
+    master.gain.linearRampToValueAtTime(.5, audio.currentTime + 1.5); // fondu d'entrée
+    master.connect(audio.destination);
+    loopStart = audio.currentTime + .1;
+    schedule();
+    timer = setInterval(() => { if (audio.currentTime > loopStart - 2) schedule(); }, 500);
+    on = true;
+    btn.setAttribute('aria-pressed', 'true');
+  }
+  function stop() {
+    clearInterval(timer);
+    const m = master;
+    if (m) {
+      m.gain.cancelScheduledValues(audio.currentTime);
+      m.gain.setValueAtTime(m.gain.value, audio.currentTime);
+      m.gain.linearRampToValueAtTime(0, audio.currentTime + .4); // fondu de sortie
+      setTimeout(() => m.disconnect(), 500);
+    }
+    on = false;
+    btn.setAttribute('aria-pressed', 'false');
+  }
+
+  btn.addEventListener('click', () => {
+    if (on) { stop(); localStorage.setItem(KEY, 'off'); }
+    else { start(); localStorage.setItem(KEY, 'on'); }
+  });
+  // activée par défaut : démarre au premier toucher n'importe où (sauf sur le bouton lui-même)
+  if (localStorage.getItem(KEY) !== 'off') {
+    const first = e => {
+      if (e.target.closest?.('#music')) return;
+      removeEventListener('pointerdown', first, true);
+      if (!on && localStorage.getItem(KEY) !== 'off') start();
+    };
+    addEventListener('pointerdown', first, true);
+  }
+  // pause quand on quitte la page ou verrouille le téléphone, reprise au retour
+  document.addEventListener('visibilitychange', () => {
+    if (!audio || !on) return;
+    document.hidden ? audio.suspend() : audio.resume();
+  });
+})();
 
 /* ---------- Neige en fond ---------- */
 // Flocons sur 3 plans : les petits, lointains, tombent lentement et pâles ; les gros, proches, plus vite.
