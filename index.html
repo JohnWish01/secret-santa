@@ -316,7 +316,7 @@ function linkFor(title, names, pair) {
 }
 
 /* ---------- Compte à rebours jusqu'au 24 décembre 2026 ---------- */
-const EVENT = new Date(2026, 11, 24);   // 24 décembre 2026, 0 h, heure du téléphone
+const EVENT = new Date(2026, 11, 24, 19); // 24 décembre 2026, 19 h, heure du téléphone
 const EVENT_END = new Date(2026, 11, 25);
 const plural = (n, word) => `${word}${n > 1 ? 's' : ''}`;
 let countdownTimer;
@@ -341,8 +341,8 @@ function tickCountdown() {
   const box = $('countdown'), now = new Date();
   if (now >= EVENT_END) { box.hidden = true; clearInterval(countdownTimer); return; }
   if (now >= EVENT) {
-    box.innerHTML = '<p class="today">C\'est le grand jour !</p>';
-    box.setAttribute('aria-label', "C'est le grand jour");
+    box.innerHTML = '<p class="today">C\'est l\'heure des cadeaux !</p>';
+    box.setAttribute('aria-label', "C'est l'heure des cadeaux");
     return;
   }
   let s = Math.floor((EVENT - now) / 1000);
@@ -353,13 +353,13 @@ function tickCountdown() {
   if (!box.querySelector('.units')) {
     box.innerHTML = '<div class="units" aria-hidden="true">' +
       units.map(() => '<div class="unit"><span class="num"></span><span class="lbl"></span></div>').join('') +
-      '</div><p class="caption">avant le 24 décembre</p>';
+      '</div><p class="caption">avant le 24 décembre à 19 h</p>';
   }
   box.querySelectorAll('.unit').forEach((el, i) => {
     el.firstChild.textContent = i ? String(units[i][0]).padStart(2, '0') : units[i][0];
     el.lastChild.textContent = units[i][1];
   });
-  box.setAttribute('aria-label', `Plus que ${d} ${plural(d, 'jour')} et ${h} ${plural(h, 'heure')} avant le 24 décembre`);
+  box.setAttribute('aria-label', `Plus que ${d} ${plural(d, 'jour')} et ${h} ${plural(h, 'heure')} avant le 24 décembre à 19 h`);
 }
 
 /* ---------- Entrée d'un écran en cascade ---------- */
