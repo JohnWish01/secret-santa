@@ -150,7 +150,6 @@
   }
   .hub { transition: box-shadow 600ms var(--ease-out); }
   .wheel-wrap.won .hub { box-shadow: 0 0 0 6px rgb(227 176 75 / .25), 0 0 28px 6px rgb(227 176 75 / .45); }
-  #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
   .hub {
     position: absolute; inset: 0; margin: auto;
     width: 18%; aspect-ratio: 1; border-radius: 50%;
@@ -160,7 +159,6 @@
   .result {
     text-align: center;
     margin-top: 2rem;
-    animation: rise 600ms var(--ease-out) both;
   }
   .result .who {
     font: 700 clamp(2.25rem, 10vw, 3.25rem)/1.05 var(--display);
@@ -168,8 +166,25 @@
     margin: .25rem 0 1rem;
     overflow-wrap: anywhere;
   }
-  @keyframes rise { from { opacity: 0; transform: translateY(12px); filter: blur(4px); } }
-  @media (prefers-reduced-motion: reduce) { .result { animation-duration: 1ms; } }
+
+  /* Entrées en cascade : chaque élément reçoit --d (retard) et --rise (distance) depuis le JS */
+  @keyframes rise { from { opacity: 0; transform: translateY(var(--rise, 10px)); filter: blur(4px); } }
+  @keyframes wheel-in { from { opacity: 0; transform: rotate(-35deg) scale(.92); filter: blur(6px); } }
+  @keyframes name-in { from { opacity: 0; transform: scale(.82); filter: blur(10px); } }
+  .enter > :not(.result), .links li.enter-li {
+    animation: rise var(--dur, 600ms) var(--ease-out) var(--d, 0ms) both;
+  }
+  .enter > .wheel-wrap { animation: wheel-in 900ms var(--ease-out) var(--d, 0ms) both; }
+  .result.show > * { animation: rise 600ms var(--ease-out) var(--d, 0ms) both; }
+  .result.show > .who { animation: name-in 800ms var(--ease-out) 120ms both; }
+  @media (prefers-reduced-motion: reduce) {
+    /* tout apparaît ensemble, en fondu, sans mouvement */
+    @keyframes rise { from { opacity: 0; } }
+    @keyframes wheel-in { from { opacity: 0; } }
+    @keyframes name-in { from { opacity: 0; } }
+    .enter > :not(.result), .links li.enter-li, .result.show > *, .result.show > .who, .enter > .wheel-wrap { animation-delay: 0ms; animation-duration: 300ms; }
+  }
+  #fireworks { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
   @media (min-width: 700px) { main { padding-top: calc(4rem + env(safe-area-inset-top, 0px)); } }
 </style>
 </head>
@@ -280,10 +295,25 @@ function linkFor(title, names, pair) {
   return `${base}#p=${pack({ t: title, n: names, g: pair.giver, r: pair.recipient })}`;
 }
 
+/* ---------- Entrée d'un écran en cascade ---------- */
+// titre (0 ms, monte le plus), intro (90 ms), puis tout le reste ensemble (170 ms, bouge peu)
+function enter(section) {
+  const kids = [...section.children].filter(el => !el.classList.contains('result') && el.id !== 'setup-error');
+  kids.forEach((el, i) => {
+    el.style.setProperty('--d', i === 0 ? '0ms' : i === 1 ? '90ms' : '170ms');
+    el.style.setProperty('--rise', i === 0 ? '16px' : i === 1 ? '10px' : '6px');
+    if (i === 0) el.style.setProperty('--dur', '700ms');
+  });
+  section.classList.remove('enter');
+  void section.offsetWidth; // relance si l'écran réapparaît
+  section.classList.add('enter');
+}
+
 /* ---------- Organisateur ---------- */
 function showSetup() {
   $('setup').hidden = false;
   $('links').hidden = true;
+  enter($('setup'));
 }
 
 function showLinks(state) {
@@ -323,8 +353,16 @@ function showLinks(state) {
       done.textContent = 'envoyé';
     });
     li.append(name, done, btn);
+    // vague qui accélère sur les 8 premières lignes ; les suivantes arrivent avec la 8e
+    const k = Math.min(i, 7);
+    li.className = 'enter-li';
+    li.style.setProperty('--d', `${170 + 50 * k - 3 * k * k}ms`);
+    li.style.setProperty('--rise', '6px');
+    li.style.setProperty('--dur', '500ms');
     list.append(li);
   });
+  enter($('links'));
+  $('link-list').style.animation = 'none'; // la liste ne bouge pas : ce sont ses lignes qui entrent
 }
 
 $('do-draw').addEventListener('click', () => {
@@ -405,14 +443,20 @@ function showResult(data) {
   const res = $('result');
   res.hidden = false;
   res.style.visibility = '';
-  res.style.animation = 'none';
-  void res.offsetHeight; // relance l'apparition
-  res.style.animation = '';
+  const [lead, , outro] = res.children;
+  lead.style.setProperty('--d', '0ms');
+  lead.style.setProperty('--rise', '8px');
+  outro.style.setProperty('--d', '380ms');
+  outro.style.setProperty('--rise', '6px');
+  res.classList.remove('show');
+  void res.offsetWidth; // relance l'apparition
+  res.classList.add('show');
 }
 
 function showSpin(data, hash) {
   $('spin').hidden = false;
   $('hello').textContent = `Salut ${data.g} !`;
+  enter($('spin'));
   document.title = data.t;
   const labels = data.n.filter(n => n !== data.g);
   const target = labels.indexOf(data.r);
@@ -459,8 +503,8 @@ function showSpin(data, hash) {
       localStorage.setItem(seen, '1');
       navigator.vibrate?.(80);
       $('wheel-wrap').classList.add('won');
-      if (!reduce) confetti();
       showResult(data);
+      if (!reduce) setTimeout(() => fireworks($('who')), 200); // les fusées partent quand le prénom apparaît
       btn.disabled = false;
       btn.textContent = 'Revoir la roue';
       $('result').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
@@ -535,38 +579,72 @@ function spinWheel(from, to, segDeg, reduce, spin) {
   });
 }
 
-/* ---------- Confettis à la révélation ---------- */
-function confetti() {
+/* ---------- Feu d'artifice autour du prénom ---------- */
+// Quelques fusées montent du bas de l'écran et éclatent autour du prénom, en léger décalé.
+function fireworks(anchor) {
   const c = document.createElement('canvas');
-  c.id = 'confetti';
+  c.id = 'fireworks';
   document.body.append(c);
-  const dpr = window.devicePixelRatio || 1, w = innerWidth, h = innerHeight;
+  const dpr = Math.min(2, window.devicePixelRatio || 1), w = innerWidth, h = innerHeight;
   c.width = w * dpr; c.height = h * dpr;
   const ctx = c.getContext('2d');
   ctx.scale(dpr, dpr);
-  const box = $('wheel').getBoundingClientRect();
-  const ox = box.left + box.width / 2, oy = box.top + box.height / 2;
-  const colors = ['#e3b04b', '#c4382d', '#f4ecdd', '#2f8a63'];
-  const bits = Array.from({ length: 90 }, () => {
-    const a = -Math.PI / 2 + (Math.random() - .5) * Math.PI * 1.1, v = 6 + Math.random() * 9;
-    return { x: ox, y: oy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: Math.random() * 6,
-      vr: (Math.random() - .5) * .4, s: 5 + Math.random() * 5, col: colors[Math.floor(Math.random() * 4)] };
+  // la cible suit le prénom en direct : la page défile encore quand les fusées partent
+  const target = () => { const b = anchor.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; };
+  const palette = ['#e3b04b', '#ff6b5a', '#f4ecdd', '#5fd39b', '#ffd27a'];
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  // 5 fusées : la première éclate juste au-dessus du prénom, les autres autour, de plus en plus serrées dans le temps
+  const rockets = [0, 260, 460, 620, 760].map((delay, i) => {
+    const dx = i === 0 ? 0 : rand(-1, 1) * Math.min(w * .42, 220);
+    const dy = -(i === 0 ? 90 : rand(40, 200));
+    return { delay, dx, dy, x: target()[0] + dx + rand(-30, 30), y: h + 10, done: false, color: palette[i % palette.length] };
   });
-  const t0 = performance.now(), life = 2200;
-  (function frame(now) {
-    const k = (now - t0) / life;
-    ctx.clearRect(0, 0, w, h);
-    ctx.globalAlpha = Math.max(0, 1 - Math.max(0, k - .6) / .4);
-    for (const b of bits) {
-      b.vy += .32; b.vx *= .985; b.x += b.vx; b.y += b.vy; b.r += b.vr;
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(b.r);
-      ctx.fillStyle = b.col;
-      ctx.fillRect(-b.s / 2, -b.s / 4, b.s, b.s / 2 * Math.abs(Math.cos(b.r * 2)) + 1);
-      ctx.restore();
+  const sparks = [];
+
+  function burst(r) {
+    const n = 46 + Math.floor(rand(0, 20)), speed = rand(3.2, 4.6);
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + rand(-.05, .05), v = speed * rand(.55, 1);
+      sparks.push({ x: r.tx, y: r.ty, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1,
+        fade: rand(.011, .017), color: Math.random() < .25 ? '#fff6e0' : r.color, size: rand(1.4, 2.4) });
     }
-    if (k < 1) requestAnimationFrame(frame); else c.remove();
+    navigator.vibrate?.(15);
+  }
+
+  const t0 = performance.now();
+  let last = t0;
+  (function frame(now) {
+    const el = now - t0, f = Math.min(3, (now - last) / 16.7); // même vitesse à 60 ou 120 Hz
+    last = now;
+    // traînées : on efface un peu l'image précédente au lieu de tout effacer
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = `rgba(0,0,0,${Math.min(1, .22 * f)})`;
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (const r of rockets) {
+      if (r.done || el < r.delay) continue;
+      const [cx, cy] = target();
+      r.tx = cx + r.dx; r.ty = Math.max(60, cy + r.dy);
+      const k = Math.min(1, (el - r.delay) / 650), e = 1 - Math.pow(1 - k, 3);
+      const x = r.x + (r.tx - r.x) * e, y = r.y + (r.ty - r.y) * e;
+      ctx.fillStyle = '#ffe9b0';
+      ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      if (k >= 1) { r.done = true; burst(r); }
+    }
+    for (const s of sparks) {
+      if (s.life <= 0) continue;
+      s.vx *= Math.pow(.965, f); s.vy = s.vy * Math.pow(.965, f) + .045 * f;
+      s.x += s.vx * f; s.y += s.vy * f; s.life -= s.fade * f;
+      const flicker = s.life < .4 ? (Math.random() < .5 ? .3 : 1) : 1; // scintille en s'éteignant
+      ctx.globalAlpha = Math.max(0, s.life) * flicker;
+      ctx.fillStyle = s.color;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    const alive = rockets.some(r => !r.done) || sparks.some(s => s.life > 0);
+    if (alive && el < 6000) requestAnimationFrame(frame); else c.remove();
   })(t0);
 }
 
@@ -579,6 +657,7 @@ if (m) {
     document.fonts.ready.then(() => showSpin(data, m[1]));
   } else {
     $('broken').hidden = false;
+    enter($('broken'));
   }
 } else {
   const saved = localStorage.getItem(ORGA);
