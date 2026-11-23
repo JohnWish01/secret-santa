@@ -142,9 +142,13 @@
     position: absolute; left: 50%; top: -6px;
     width: 34px; height: 40px;
     transform: translateX(-50%);
+    transform-origin: 50% 8px; /* pivote par le haut, comme une languette */
     filter: drop-shadow(0 3px 4px rgb(0 0 0 / .45));
     z-index: 1;
   }
+  .hub { transition: box-shadow 600ms var(--ease-out); }
+  .wheel-wrap.won .hub { box-shadow: 0 0 0 6px rgb(227 176 75 / .25), 0 0 28px 6px rgb(227 176 75 / .45); }
+  #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
   .hub {
     position: absolute; inset: 0; margin: auto;
     width: 18%; aspect-ratio: 1; border-radius: 50%;
@@ -200,7 +204,7 @@
   <section id="spin" hidden>
     <h1 id="hello"></h1>
     <p class="muted" id="spin-lead">Tourne la roue pour découvrir à qui tu offres un cadeau.</p>
-    <div class="wheel-wrap">
+    <div class="wheel-wrap" id="wheel-wrap">
       <svg class="pointer" viewBox="0 0 34 40" aria-hidden="true"><path d="M17 40 2 6a5 5 0 0 1 4.6-6h20.8A5 5 0 0 1 32 6Z" fill="#e3b04b"/></svg>
       <canvas id="wheel" role="img" aria-label="Roue avec les prénoms des participants"></canvas>
       <div class="hub"></div>
@@ -418,26 +422,123 @@ function showSpin(data, hash) {
 
   btn.addEventListener('click', () => {
     btn.disabled = true;
+    btn.textContent = 'La roue tourne…';
     $('result').hidden = true;
+    $('wheel-wrap').classList.remove('won');
     const segDeg = 360 / labels.length;
     const jitter = (Math.random() - 0.5) * segDeg * 0.7;
     const landing = -(target + 0.5) * segDeg + jitter;
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const turns = reduce ? 1 : 6;
     // tourne toujours vers l'avant depuis la position actuelle
-    const base = Math.ceil(rotation / 360) * 360;
-    rotation = base + turns * 360 + ((landing % 360) + 360) % 360;
-    canvas.style.transition = `transform ${reduce ? 600 : 5200}ms cubic-bezier(.12,.62,.08,1)`;
-    canvas.style.transform = `rotate(${rotation}deg)`;
-    canvas.addEventListener('transitionend', () => {
+    const from = rotation;
+    const to = Math.ceil(from / 360) * 360 + (reduce ? 1 : 9) * 360 + ((landing % 360) + 360) % 360;
+    spinWheel(from, to, segDeg, reduce).then(() => {
+      rotation = to;
       localStorage.setItem(seen, '1');
       navigator.vibrate?.(80);
+      $('wheel-wrap').classList.add('won');
+      if (!reduce) confetti();
       showResult(data);
       btn.disabled = false;
       btn.textContent = 'Revoir la roue';
       $('result').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
-    }, { once: true });
+    });
   });
+}
+
+/* ---------- Animation de la roue ---------- */
+const WINDUP = 450;   // petit recul avant l'élan
+const SPIN = 8000;    // élan puis lente décélération
+const easeInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOut = t => 1 - Math.pow(1 - t, 4); // finit très lentement : le suspense
+
+let audio;
+function tick(volume) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const t = audio.currentTime, osc = audio.createOscillator(), gain = audio.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1800, t);
+    osc.frequency.exponentialRampToValueAtTime(600, t + .03);
+    gain.gain.setValueAtTime(volume, t);
+    gain.gain.exponentialRampToValueAtTime(.0001, t + .04);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + .05);
+  } catch { /* pas de son, tant pis */ }
+}
+
+function spinWheel(from, to, segDeg, reduce) {
+  const canvas = $('wheel'), pointer = document.querySelector('.pointer');
+  const windup = reduce ? 0 : WINDUP, spin = reduce ? 900 : SPIN;
+  const back = reduce ? 0 : Math.min(18, segDeg * .6);
+  tick(0); // débloque le son sur iPhone : il faut le créer pendant le clic
+  return new Promise(done => {
+    let start = null, prev = from, lastTick = Math.floor(from / segDeg), flick = 0;
+    function frame(now) {
+      start ??= now;
+      const el = now - start;
+      let rot;
+      if (el < windup) rot = from - back * easeInOut(el / windup);
+      else {
+        const t = Math.min(1, (el - windup) / spin);
+        rot = (from - back) + (to - from + back) * easeOut(t);
+      }
+      canvas.style.transform = `rotate(${rot}deg)`;
+
+      // la languette claque à chaque tranche qui passe, plus fort quand ça va vite
+      const speed = Math.abs(rot - prev);
+      const seg = Math.floor(rot / segDeg);
+      if (seg !== lastTick && !reduce) {
+        flick = -Math.min(28, 10 + speed * 1.6) * Math.sign(rot - prev || 1);
+        tick(speed > 8 ? .04 : .09);
+        if (speed < 3) navigator.vibrate?.(6);
+        lastTick = seg;
+      }
+      flick *= .8; // la languette revient en place
+      pointer.style.transform = `translateX(-50%) rotate(${flick.toFixed(2)}deg)`;
+      prev = rot;
+
+      if (el < windup + spin || Math.abs(flick) > .2) requestAnimationFrame(frame);
+      else { pointer.style.transform = 'translateX(-50%)'; done(); }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+/* ---------- Confettis à la révélation ---------- */
+function confetti() {
+  const c = document.createElement('canvas');
+  c.id = 'confetti';
+  document.body.append(c);
+  const dpr = window.devicePixelRatio || 1, w = innerWidth, h = innerHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const box = $('wheel').getBoundingClientRect();
+  const ox = box.left + box.width / 2, oy = box.top + box.height / 2;
+  const colors = ['#e3b04b', '#c4382d', '#f4ecdd', '#2f8a63'];
+  const bits = Array.from({ length: 90 }, () => {
+    const a = -Math.PI / 2 + (Math.random() - .5) * Math.PI * 1.1, v = 6 + Math.random() * 9;
+    return { x: ox, y: oy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: Math.random() * 6,
+      vr: (Math.random() - .5) * .4, s: 5 + Math.random() * 5, col: colors[Math.floor(Math.random() * 4)] };
+  });
+  const t0 = performance.now(), life = 2200;
+  (function frame(now) {
+    const k = (now - t0) / life;
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalAlpha = Math.max(0, 1 - Math.max(0, k - .6) / .4);
+    for (const b of bits) {
+      b.vy += .32; b.vx *= .985; b.x += b.vx; b.y += b.vy; b.r += b.vr;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.r);
+      ctx.fillStyle = b.col;
+      ctx.fillRect(-b.s / 2, -b.s / 4, b.s, b.s / 2 * Math.abs(Math.cos(b.r * 2)) + 1);
+      ctx.restore();
+    }
+    if (k < 1) requestAnimationFrame(frame); else c.remove();
+  })(t0);
 }
 
 /* ---------- Démarrage ---------- */
