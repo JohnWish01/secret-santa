@@ -442,8 +442,17 @@ function showSpin(data, hash) {
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     // tourne toujours vers l'avant depuis la position actuelle
     const from = rotation;
-    const to = Math.ceil(from / 360) * 360 + (reduce ? 1 : 5) * 360 + ((landing % 360) + 360) % 360;
-    spinWheel(from, to, segDeg, reduce).then(() => {
+    // Vitesse max limitée à une fraction de tranche par image (à 60 Hz) : au-delà,
+    // l'œil ne suit plus les tranches et la roue semble saccader ou tourner à l'envers.
+    const minSpin = reduce ? 6000 : SPIN;
+    const peak = Math.min(reduce ? 8 : 16, segDeg * .45);
+    const dist = peak * minSpin / (4 * 16.7); // la courbe easeOut démarre à 4× la vitesse moyenne
+    const base = Math.ceil(from / 360) * 360, land = ((landing % 360) + 360) % 360;
+    const turns = Math.max(1, Math.round((dist - (base - from) - land) / 360));
+    const to = base + turns * 360 + land;
+    // si les tranches sont fines, on allonge le ralenti plutôt que d'aller trop vite (12 s max)
+    const spin = Math.min(12000, Math.max(minSpin, 4 * (to - from + 18) * 16.7 / peak));
+    spinWheel(from, to, segDeg, reduce, spin).then(() => {
       rotation = to;
       localStorage.setItem(seen, '1');
       navigator.vibrate?.(80);
@@ -479,9 +488,9 @@ function tick(volume) {
   } catch { /* pas de son, tant pis */ }
 }
 
-function spinWheel(from, to, segDeg, reduce) {
+function spinWheel(from, to, segDeg, reduce, spin) {
   const canvas = $('wheel'), pointer = document.querySelector('.pointer');
-  const windup = reduce ? 0 : WINDUP, spin = reduce ? 1400 : SPIN;
+  const windup = reduce ? 0 : WINDUP;
   const back = reduce ? 0 : Math.min(18, segDeg * .6);
   tick(0); // débloque le son sur iPhone : il faut le créer pendant le clic
   return new Promise(done => {
